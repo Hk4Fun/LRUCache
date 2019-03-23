@@ -50,12 +50,6 @@ class ThreadCleanup(threading.Thread):
 
 class LRUCacheDict:
     def __init__(self, maxsize=128, expiration=5 * 60, cleanup_duration=0, thread_safe=True):
-        if maxsize is not None and not isinstance(maxsize, int):
-            raise TypeError('Expected maxsize to be an integer or None')
-        if expiration is not None and not isinstance(expiration, int):
-            raise TypeError('Expected expiration to be an integer or None')
-        if cleanup_duration is not None and not isinstance(cleanup_duration, int):
-            raise TypeError('Expected cleanup_duration to be an integer or None')
         if cleanup_duration and not thread_safe:
             warnings.warn('Thread cleanup must be run under thread safe, automatically set thread safe!')
             thread_safe = True
@@ -71,11 +65,8 @@ class LRUCacheDict:
             ThreadCleanup(self, cleanup_duration).start()
 
     @_lock_decorator
-    def __len__(self):
-        return len(self._cache)
-
-    @_lock_decorator
     def __contains__(self, key):
+        self.cleanup()
         return key in self._cache
 
     @_lock_decorator
@@ -98,6 +89,11 @@ class LRUCacheDict:
             del self._cache[key]
 
     @_lock_decorator
+    def size(self):
+        self.cleanup()
+        return len(self._cache)
+
+    @_lock_decorator
     def get(self, key, default=None):
         self.cleanup()
         if key in self._cache:
@@ -110,7 +106,7 @@ class LRUCacheDict:
         now = time.time()
         # Delete expired
         next_expire = None
-        for k in self._cache:
+        for k in list(self._cache.keys()):
             if self._cache[k].expire_time < now:
                 self.__delete__(k)
             else:
