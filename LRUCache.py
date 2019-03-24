@@ -9,8 +9,20 @@ LRUItem = namedtuple('LRUItem', ['val', 'expire_time'])
 
 
 def lru_cache(maxsize=128, expiration=5 * 60, cleanup_duration=0, thread_safe=True):
+    """
+    :param maxsize: >= 0 or None, if set to None, the cache can grow without bound
+    :param expiration: >= 0 or None, if set to None, keys will not expire
+    :param cleanup_duration: >= 0 or None, if set to 0 or None, cleanup thread will not start
+    :param thread_safe: True or False, if set a cleanup thread, thread safe must open
+    :return: a lru decorator
+    """
+
     def decorator(user_func):
-        wrapper = LRUCacheWrapper(user_func, LRUCacheDict(maxsize, expiration, cleanup_duration, thread_safe))
+        if maxsize == 0:  # No caching
+            def wrapper(*args, **kwds):
+                return user_func(*args, **kwds)
+        else:
+            wrapper = LRUCacheWrapper(user_func, LRUCacheDict(maxsize, expiration, cleanup_duration, thread_safe))
         return functools.update_wrapper(wrapper, user_func)
 
     return decorator
@@ -34,10 +46,10 @@ class ThreadCleanup(threading.Thread):
     def __init__(self, cache, duration=1 * 60):
         super().__init__()
         self.duration = duration
-        self.ref_cache = weakref.ref(cache)
+        self.ref_cache = weakref.ref(cache)  # use weakref to avoid circular reference
 
     def run(self):
-        while self.ref_cache():
+        while self.ref_cache():  # get the cache
             cache = self.ref_cache()
             if cache:
                 next_expire = cache.cleanup()
@@ -45,7 +57,7 @@ class ThreadCleanup(threading.Thread):
                     time.sleep(self.duration)
                 else:
                     time.sleep(next_expire + 1)
-            cache = None
+            cache = None  # manually collect memory to avoid circular reference
 
 
 class LRUCacheDict:
@@ -54,15 +66,15 @@ class LRUCacheDict:
             warnings.warn('Thread cleanup must be run under thread safe, automatically set thread safe!')
             thread_safe = True
 
-        self.maxsize = maxsize
-        self.expiration = expiration
+        self.maxsize = maxsize if maxsize else float('inf')
+        self.expiration = expiration if expiration else float('inf')
         self.thread_safe = thread_safe
         self._cache = OrderedDict()
 
         if self.thread_safe:
             self._lock = threading.RLock()
         if cleanup_duration:
-            ThreadCleanup(self, cleanup_duration).start()
+            ThreadCleanup(self, cleanup_duration).start()  # it's a circular reference
 
     @_lock_decorator
     def __contains__(self, key):
@@ -125,7 +137,7 @@ class LRUCacheWrapper:
         self.user_func = user_func
 
     def __call__(self, *args, **kwargs):
-        key = repr((args, kwargs)) + '#' + self.user_func.__name__
+        key = repr((args, kwargs)) + '#' + self.user_func.__name__  # generate cache key
         res = self._cache.get(key)
         if not res:
             res = self.user_func(*args, **kwargs)
